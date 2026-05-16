@@ -1,143 +1,93 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import io
-import datetime
 
-# Configuración inicial de la página web
-st.set_page_config(page_title="EcoStock AI - Analizador Financiero", layout="wide")
+# 1. Configuración de página
+st.set_page_config(page_title="Analizador Financiero", layout="wide")
+st.title("📊 Consultor Financiero IA: EVA y Ratios")
 
-st.title("📊 Sistema Cognitivo de Análisis Financiero y Valor Económico (EVA)")
-st.markdown("Cargue los estados financieros de su empresa para proyectar escenarios y evaluar la creación de valor real.")
+# 2. Carga de archivos en la barra lateral
+st.sidebar.header("Configuración")
+archivo = st.sidebar.file_uploader("Cargar Excel", type=["xlsx"])
+ke_usuario = st.sidebar.slider("Costo Patrimonio (Ke) %", 5.0, 25.0, 14.0) / 100
 
-# --- BARRA LATERAL ---
-st.sidebar.header("📁 Ingesta de Información")
-archivo_cargado = st.sidebar.file_uploader("Suba el archivo de Excel (.xlsx)", type=["xlsx"])
-
-st.sidebar.header("⚙️ Parámetros de Mercado")
-ke_usuario = st.sidebar.slider("Costo de Oportunidad del Patrimonio (Ke)", min_value=5.0, max_value=25.0, value=14.0, step=0.5) / 100
-
-# --- LÓGICA DE PROCESAMIENTO ---
-if archivo_cargado is not None:
+if archivo:
     try:
-        archivo_excel = pd.ExcelFile(archivo_cargado)
-        nombres_pestanas = archivo_excel.sheet_names
+        # Leer todas las pestañas
+        xls = pd.ExcelFile(archivo)
         
-        pestana_balance = None
-        pestana_resultados = None
+        # Identificar pestañas (Busca por palabras clave)
+        p_bal = [s for s in xls.sheet_names if 'balan' in s.lower() or 'situac' in s.lower()][0]
+        p_res = [s for s in xls.sheet_names if 'result' in s.lower() or 'pérdid' in s.lower()][0]
         
-        for nombre in nombres_pestanas:
-            nombre_min = nombre.lower().strip()
-            if 'balance' in nombre_min or 'situacion' in nombre_min or 'situación' in nombre_min:
-                pestana_balance = nombre
-            elif 'resultado' in nombre_min or 'perdidas' in nombre_min or 'pérdidas' in nombre_min:
-                pestana_resultados = nombre
+        # Cargar DataFrames
+        df_balance = pd.read_excel(archivo, sheet_name=p_bal)
+        df_resultados = pd.read_excel(archivo_archivo, sheet_name=p_res) if 'archivo_archivo' not in locals() else pd.read_excel(archivo, sheet_name=p_res)
+        
+        # Limpieza de datos inmediata
+        df_balance['Cuenta'] = df_balance['Cuenta'].str.strip()
+        df_resultados['Cuenta'] = df_resultados['Cuenta'].str.strip()
+        df_balance = df_balance.set_index('Cuenta')
+        df_resultados = df_resultados.set_index('Cuenta')
 
-        if not pestana_balance or not pestana_resultados:
-            st.error(f"No se identificaron las pestañas. Pestañas detectadas: {nombres_pestanas}")
-        else:
-            df_balance = pd.read_excel(archivo_cargado, sheet_name=pestana_balance).set_index('Cuenta')
-            df_resultados = pd.read_excel(archivo_cargado, sheet_name=pestana_resultados).set_index('Cuenta')
-            
-            # Limpiar índices
-            df_balance.index = df_balance.index.str.strip()
-            df_resultados.index = df_resultados.index.str.strip()
+        # --- EXTRACCIÓN DE VALORES ---
+        # Balance
+        at = df_balance.loc['Total Activos', 'Valor']
+        ac = df_balance.loc['Activo Corriente', 'Valor']
+        pc = df_balance.loc['Pasivo Corriente', 'Valor']
+        pt = df_balance.loc['Total Pasivos', 'Valor']
+        pat = df_balance.loc['Patrimonio Neto', 'Valor']
+        inv = df_balance.loc['Inventarios', 'Valor']
+        cxc = df_balance.loc['Cuentas por Cobrar', 'Valor']
+        df_fin = df_balance.loc['Deuda Financiera (Corto y Largo Plazo)', 'Valor']
+        pc_sc = df_balance.loc['Pasivo Corriente (Sin Costo Financiero)', 'Valor']
 
-            total_activos = df_balance.loc['Total Activos', 'Valor']
-            pasivo_corriente_sin_costo = df_balance.loc['Pasivo Corriente (Sin Costo Financiero)', 'Valor']
-            deuda_financiera = df_balance.loc['Deuda Financiera (Corto y Largo Plazo)', 'Valor']
-            patrimonio = df_balance.loc['Patrimonio Neto', 'Valor']
+        # Resultados
+        uaii = df_resultados.loc['Utilidad Operativa (UAII)', 'Valor']
+        ventas = df_resultados.loc['Ingresos Totales', 'Valor']
+        int_pagados = df_resultados.loc['Gastos Financieros (Intereses)', 'Valor']
+        imp = df_resultados.loc['Impuestos de Renta', 'Valor']
+        uai = df_resultados.loc['Utilidad Antes de Impuestos', 'Valor']
 
-            uaii = df_resultados.loc['Utilidad Operativa (UAII)', 'Valor']
-            gastos_financieros = df_resultados.loc['Gastos Financieros (Intereses)', 'Valor']
-            impuestos = df_resultados.loc['Impuestos de Renta', 'Valor']
-            utilidad_antes_impuestos = df_resultados.loc['Utilidad Antes de Impuestos', 'Valor']
+        # --- CÁLCULOS FINANCIEROS ---
+        tax_rate = imp / uai if uai > 0 else 0.33
+        kd = int_pagados / df_fin if df_fin > 0 else 0
+        v_total = df_fin + pat
+        wacc = ((df_fin/v_total)*kd*(1-tax_rate)) + ((pat/v_total)*ke_usuario)
+        
+        uodi = uaii * (1 - tax_rate)
+        capital_inv = at - pc_sc
+        eva = uodi - (capital_inv * wacc)
+        roic = uodi / capital_inv if capital_inv > 0 else 0
 
-            # --- CÁLCULOS CORE ---
-            T = impuestos / utilidad_antes_impuestos
-            Kd = gastos_financieros / deuda_financiera
-            V = deuda_financiera + patrimonio
-            Wd = deuda_financiera / V
-            We = patrimonio / V
-            
-            wacc = (Wd * Kd * (1 - T)) + (We * ke_usuario)
-            uodi = uaii * (1 - T)
-            capital_invertido = total_activos - pasivo_corriente_sin_costo
-            cargo_capital = capital_invertido * wacc
-            eva = uodi - cargo_capital
-            roic = uodi / capital_invertido
+        # Ratios
+        liq_corr = ac / pc
+        end_tot = (pt / at) * 100
+        rot_act = ventas / at
 
-            # --- INTERFAZ ---
-            tab1, tab2 = st.tabs(["🎯 Diagnóstico Actual", "🔮 Proyección de Escenarios"])
-            
-            with tab1:
-                st.subheader("Indicadores de Desempeño Financiero")
-                col1, col2, col3 = st.columns(3)
-                col1.metric(label="WACC", value=f"{wacc*100:.2f}%")
-                col2.metric(label="ROIC", value=f"{roic*100:.2f}%")
-                col3.metric(label="EVA", value=f"${eva:,.2f}")
+        # --- INTERFAZ DE USUARIO ---
+        t1, t2, t3 = st.tabs(["🎯 EVA", "🔮 Escenarios", "📋 Informe e IA"])
 
-                st.subheader("Visualización Operativa")
-                chart_data = pd.DataFrame({
-                    'Métrica': ['UODI', 'Cargo Capital'],
-                    'Valor': [uodi, cargo_capital]
-                })
-                st.bar_chart(data=chart_data, x='Métrica', y='Valor')
+        with t1:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("EVA", f"${eva:,.2f}", delta="Generando Valor" if eva > 0 else "Destruyendo Valor")
+            c2.metric("WACC", f"{wacc*100:.2f}%")
+            c3.metric("ROIC", f"{roic*100:.2f}%")
+            st.bar_chart(pd.DataFrame({'Monto': [uodi, capital_inv * wacc]}, index=['Utilidad (UODI)', 'Costo Capital']))
 
-            with tab2:
-                st.subheader("Análisis de Escenarios")
-                datos_escenarios = {
-                    "Escenario": ["Optimista", "Base", "Pesimista"],
-                    "UODI": [uodi * 1.10, uodi, uodi * 0.85],
-                    "EVA": [(uodi * 1.10) - (capital_invertido * (wacc - 0.01)), eva, (uodi * 0.85) - (capital_invertido * (wacc + 0.02))]
-                }
-                st.table(pd.DataFrame(datos_escenarios))
+        with t3:
+            st.subheader("Análisis de Salud y Recomendaciones")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.write(f"**Liquidez:** {liq_corr:.2f}")
+                st.write(f"**Endeudamiento:** {end_tot:.1f}%")
+            with col_b:
+                st.info("💡 **Recomendación IA:**")
+                if eva < 0: st.write("- Su costo de capital supera la rentabilidad. Revise márgenes operativos.")
+                if liq_corr < 1.2: st.write("- Alerta de liquidez: Considere factoring para sus cuentas por cobrar.")
+                if end_tot > 65: st.write("- Endeudamiento alto. Priorice desapalancamiento antes de nuevas inversiones.")
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error de lectura: Asegúrese de que los nombres de las cuentas en el Excel coinciden. Detalle: {e}")
 else:
-            # --- 1. EXTRACCIÓN DE DATOS ---
-            # Asegúrate de que estos nombres existan en tu columna 'Cuenta' del Excel
-            df_balance.index = df_balance.index.str.strip()
-            df_resultados.index = df_resultados.index.str.strip()
-            total_activos = df_balance.loc['Total Activos', 'Valor']
-            total_activos_corrientes = df_balance.loc['Activo Corriente', 'Valor']
-            pasivo_corriente = df_balance.loc['Pasivo Corriente', 'Valor']
-            total_pasivos = df_balance.loc['Total Pasivos', 'Valor']
-            patrimonio = df_balance.loc['Patrimonio Neto', 'Valor']
-            inventarios = df_balance.loc['Inventarios', 'Valor']
-            cuentas_por_cobrar = df_balance.loc['Cuentas por Cobrar', 'Valor']
-            
-            uaii = df_resultados.loc['Utilidad Operativa (UAII)', 'Valor']
-            ventas = df_resultados.loc['Ingresos Totales', 'Valor']
-            gastos_financieros = df_resultados.loc['Gastos Financieros (Intereses)', 'Valor']
-            impuestos = df_resultados.loc['Impuestos de Renta', 'Valor']
-            utilidad_antes_impuestos = df_resultados.loc['Utilidad Antes de Impuestos', 'Valor']
-
-            # --- 2. CÁLCULOS ---
-            T = impuestos / utilidad_antes_impuestos
-            Kd = gastos_financieros / deuda_financiera if deuda_financiera > 0 else 0
-            V = deuda_financiera + patrimonio
-            Wd = deuda_financiera / V if V > 0 else 0
-            We = patrimonio / V if V > 0 else 0
-            
-            wacc = (Wd * Kd * (1 - T)) + (We * ke_usuario)
-            uodi = uaii * (1 - T)
-            capital_invertido = total_activos - pasivo_corriente_sin_costo
-            cargo_capital = capital_invertido * wacc
-            eva = uodi - cargo_capital
-            roic = uodi / capital_invertido if capital_invertido > 0 else 0
-
-            # Ratios adicionales
-            razon_corriente = total_activos_corrientes / pasivo_corriente
-            endeudamiento_total = (total_pasivos / total_activos) * 100
-            rotacion_activos = ventas / total_activos
-
-            # --- 3. INTERFAZ ---
-            st.success("Análisis completado con éxito")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("EVA", f"${eva:,.2f}")
-            col2.metric("WACC", f"{wacc*100:.2f}%")
-            col3.metric("Razón Corriente", f"{razon_corriente:.2f}")
-            
-            # Aquí puedes añadir el resto de pestañas y el informe...
+    st.info("👋 Bienvenido. Cargue un archivo Excel para iniciar el diagnóstico.")
