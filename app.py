@@ -97,17 +97,67 @@ if archivo_cargado is not None:
         st.error(f"Error: {e}")
 else:
     st.info("Cargue su archivo Excel para comenzar.")
-# --- CÁLCULOS ADICIONALES (RATIOS) ---
-            
-            # 1. Ratios de Liquidez
-            razon_corriente = total_activos_corrientes / pasivo_corriente  # Necesitas definir estas variables del Excel
+# --- 1. EXTRACCIÓN DE NUEVAS VARIABLES DEL EXCEL ---
+            # Asegúrate de que estas cuentas existan en tu archivo Excel
+            total_activos_corrientes = df_balance.loc['Activo Corriente', 'Valor']
+            pasivo_corriente = df_balance.loc['Pasivo Corriente', 'Valor']
+            total_pasivos = df_balance.loc['Total Pasivos', 'Valor']
+            inventarios = df_balance.loc['Inventarios', 'Valor']
+            ventas = df_resultados.loc['Ingresos Totales', 'Valor']
+            cuentas_por_cobrar = df_balance.loc['Cuentas por Cobrar', 'Valor']
+
+            # --- 2. CÁLCULOS DE RATIOS (CORREGIDOS) ---
+            # Liquidez
+            razon_corriente = total_activos_corrientes / pasivo_corriente
             prueba_acida = (total_activos_corrientes - inventarios) / pasivo_corriente
             
-            # 2. Ratios de Solvencia y Endeudamiento
+            # Endeudamiento
             endeudamiento_total = (total_pasivos / total_activos) * 100
-            autonomia_financiera = (patrimonio / total_pasivos)
+            apalancamiento = (total_pasivos / patrimonio)
             
-            # 3. Ratios de Actividad (Eficiencia)
-            # Nota: Ventas viene del Estado de Resultados
+            # Actividad
             rotacion_activos = ventas / total_activos
             dias_cobro = (cuentas_por_cobrar * 360) / ventas
+
+            # --- 3. MOTOR DE RECOMENDACIONES COGNITIVAS ---
+            def generar_diagnostico(eva, liq, end, roic, wacc):
+                alertas = []
+                recomendaciones = []
+                
+                if eva > 0:
+                    alertas.append("✅ **VALOR:** La empresa crea valor económico.")
+                else:
+                    alertas.append("❌ **VALOR:** Destrucción de valor detectada.")
+                    recomendaciones.append("- Revisar eficiencia operativa para subir el ROIC.")
+
+                if liq < 1.2:
+                    alertas.append("⚠️ **LIQUIDEZ:** Capacidad de pago limitada a corto plazo.")
+                    recomendaciones.append("- Evaluar factoraje para convertir cuentas por cobrar en efectivo rápido.")
+
+                if end > 60:
+                    alertas.append("🚩 **SOLVENCIA:** El nivel de deuda es elevado (>60%).")
+                    recomendaciones.append("- Evitar adquirir nuevos créditos financieros este periodo.")
+                
+                return alertas, recomendaciones
+
+            # --- 4. INTERFAZ DE RESULTADOS ---
+            tab1, tab2, tab3 = st.tabs(["🎯 EVA", "🔮 Escenarios", "📊 Ratios e Informe"])
+
+            with tab3:
+                st.subheader("Análisis de Salud Financiera")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Razón Corriente", f"{razon_corriente:.2f}")
+                c2.metric("Endeudamiento", f"{endeudamiento_total:.1f}%")
+                c3.metric("Rotación Activos", f"{rotacion_activos:.2f}x")
+
+                st.markdown("---")
+                st.subheader("📋 Informe de Recomendaciones IA")
+                alertas_ia, recs_ia = generar_diagnostico(eva, razon_corriente, endeudamiento_total, roic, wacc)
+                
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.write("**Diagnósticos:**")
+                    for a in alertas_ia: st.write(a)
+                with col_b:
+                    st.write("**Acciones Sugeridas:**")
+                    for r in recs_ia: st.write(r)
