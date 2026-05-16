@@ -1,17 +1,18 @@
 import streamlit as st
 import pandas as pd
 import io
+import datetime
 
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="Consultor Financiero IA", layout="wide")
-st.title("📊 Consultor Financiero Integrado: EVA, Ratios y Diagnóstico")
+st.title("📊 Consultor Financiero Integrado: EVA, Ratios y Agente IA")
 
 # 2. CARGA DE DATOS (BARRA LATERAL)
 st.sidebar.header("📁 Ingesta de Información")
 archivo = st.sidebar.file_uploader("Suba su archivo Excel (.xlsx)", type=["xlsx"])
 ke_usuario = st.sidebar.slider("Costo de Oportunidad (Ke) %", 5.0, 25.0, 14.0, step=0.5) / 100
 
-# FUNCIÓN DE EXTRACCIÓN SEGURA (Evita errores de Series/Float)
+# FUNCIÓN DE EXTRACCIÓN SEGURA
 def get_val(df, cuenta):
     try:
         val = df.loc[cuenta, 'Valor']
@@ -24,14 +25,12 @@ def get_val(df, cuenta):
 if archivo:
     try:
         xls = pd.ExcelFile(archivo)
-        # Identificación inteligente de pestañas
         p_bal = [s for s in xls.sheet_names if 'balan' in s.lower() or 'situac' in s.lower()][0]
         p_res = [s for s in xls.sheet_names if 'result' in s.lower() or 'perd' in s.lower() or 'pérd' in s.lower()][0]
         
         df_balance = pd.read_excel(archivo, sheet_name=p_bal)
         df_resultados = pd.read_excel(archivo, sheet_name=p_res)
         
-        # Limpieza de nombres
         df_balance['Cuenta'] = df_balance['Cuenta'].astype(str).str.strip()
         df_resultados['Cuenta'] = df_resultados['Cuenta'].astype(str).str.strip()
         df_b = df_balance.set_index('Cuenta')
@@ -54,12 +53,11 @@ if archivo:
         imp = get_val(df_r, 'Impuestos de Renta')
         uai = get_val(df_r, 'Utilidad Antes de Impuestos')
 
-        # Verificación de datos mínimos
         if None in [at, ac, pc, pt, pat, uaii, ventas]:
-            st.error("❌ Faltan cuentas críticas en el Excel. Revise los nombres de la columna 'Cuenta'.")
+            st.error("❌ Faltan cuentas críticas. Verifique su Excel.")
             st.stop()
 
-        # --- CÁLCULOS CORE (EVA Y WACC) ---
+        # --- CÁLCULOS ---
         tax_rate = imp / uai if (uai and uai > 0) else 0.33
         kd = int_pag / df_fin if (df_fin and df_fin > 0) else 0
         v_est = (df_fin if df_fin else 0) + pat
@@ -68,69 +66,74 @@ if archivo:
         cap_inv = at - (pc_sc if pc_sc else 0)
         eva = uodi - (cap_inv * wacc)
         roic = uodi / cap_inv if cap_inv > 0 else 0
-
-        # --- CÁLCULOS ADICIONALES (RATIOS) ---
+        
         razon_corriente = ac / pc if pc > 0 else 0
-        prueba_acida = (ac - (inv if inv else 0)) / pc if pc > 0 else 0
         endeudamiento_total = (pt / at) * 100 if at > 0 else 0
-        autonomia_financiera = pat / pt if (pt and pt > 0) else 0 
         rotacion_activos = ventas / at if at > 0 else 0
         dias_cobro = ((cxc if cxc else 0) * 360) / ventas if ventas > 0 else 0
 
         # --- INTERFAZ ---
-        tab1, tab2, tab3 = st.tabs(["🎯 Diagnóstico EVA", "🔮 Escenarios", "📊 Ratios Financieros"])
+        tab1, tab2, tab3, tab4 = st.tabs(["🎯 EVA", "🔮 Escenarios", "📊 Ratios", "🤖 Agente de Consultoría"])
 
         with tab1:
-            st.subheader("Análisis de Generación de Valor")
+            st.subheader("Generación de Valor")
             c1, c2, c3 = st.columns(3)
             c1.metric("EVA", f"${eva:,.2f}", delta="Creación" if eva > 0 else "Destrucción")
             c2.metric("WACC", f"{wacc*100:.2f}%")
             c3.metric("ROIC", f"{roic*100:.2f}%")
-            
-            st.markdown("### 🧠 Diagnóstico IA")
-            if eva > 0 and razon_corriente < 1.0:
-                st.warning("⚠️ **Alerta de Seguridad:** La empresa crea valor, pero tiene riesgo de iliquidez.")
-            elif eva < 0:
-                st.error(f"❌ **Alerta de Valor:** Se destruye valor económico.")
-            else:
-                st.success("✅ **Situación Ideal:** La empresa genera valor y es solvente.")
+            st.bar_chart(pd.DataFrame({'Monto': [uodi, cap_inv * wacc]}, index=['Utilidad (UODI)', 'Costo Capital']))
 
         with tab2:
-            st.subheader("Simulación de Escenarios")
-            esc_data = {
-                "Escenario": ["Optimista (+10% UODI)", "Base", "Pesimista (+2% WACC)"],
-                "EVA Estimado": [
-                    (uodi * 1.1) - (cap_inv * wacc),
-                    eva,
-                    uodi - (cap_inv * (wacc + 0.02))
-                ]
-            }
-            st.table(pd.DataFrame(esc_data).style.format({"EVA Estimado": "${:,.2f}"}))
+            st.subheader("Simulación")
+            esc_data = {"Escenario": ["Optimista", "Base", "Pesimista"],
+                        "EVA": [(uodi * 1.1) - (cap_inv * wacc), eva, uodi - (cap_inv * (wacc + 0.02))]}
+            st.table(pd.DataFrame(esc_data).style.format({"EVA": "${:,.2f}"}))
 
         with tab3:
-            st.subheader("Análisis de Ratios Financieros")
-            col_liq, col_sol, col_act = st.columns(3)
+            st.subheader("Ratios de Salud")
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Liquidez Corriente", f"{razon_corriente:.2f}")
+            r2.metric("Endeudamiento", f"{endeudamiento_total:.1f}%")
+            r3.metric("Rotación Activos", f"{rotacion_activos:.2f}x")
+
+        with tab4:
+            st.header("🤖 Informe Estratégico del Agente IA")
+            st.info(f"Fecha de análisis: {datetime.date.today()}")
             
-            with col_liq:
-                st.markdown("#### Liquidez")
-                st.metric("Razón Corriente", f"{razon_corriente:.2f}")
-                st.metric("Prueba Ácida", f"{prueba_acida:.2f}")
+            col_diag, col_plan = st.columns(2)
+            
+            with col_diag:
+                st.subheader("🔍 Diagnóstico de Situación")
+                if eva > 0:
+                    st.success("✅ **FORTALEZA:** La empresa supera su costo de oportunidad. Hay excedente para reinversión o dividendos.")
+                else:
+                    st.error("❌ **DEBILIDAD:** Destrucción de valor. El retorno operativo no compensa el riesgo del capital invertido.")
+                
+                if razon_corriente < 1.2:
+                    st.warning("⚠️ **ALERTA DE CAJA:** La liquidez es frágil. Podría haber dificultades para cubrir pasivos inmediatos.")
+                
+                if endeudamiento_total > 60:
+                    st.warning("🚩 **ALERTA DE SOLVENCIA:** La estructura de capital depende excesivamente de terceros.")
 
-            with col_sol:
-                st.markdown("#### Solvencia")
-                st.metric("Endeudamiento", f"{endeudamiento_total:.1f}%")
-                st.metric("Autonomía", f"{autonomia_financiera:.2f}")
-
-            with col_act:
-                st.markdown("#### Actividad")
-                st.metric("Rotación Activos", f"{rotacion_activos:.2f}x")
-                st.metric("Días de Cobro", f"{int(dias_cobro)} días")
+            with col_plan:
+                st.subheader("🚀 Plan de Acción Sugerido")
+                acciones = []
+                if eva < 0:
+                    acciones.append("1. **Reingeniería de Costos:** El ROIC está bajo; identifique procesos que consumen recursos sin generar margen.")
+                if razon_corriente < 1.2:
+                    acciones.append("2. **Optimización de COI:** Acelere el recaudo de cartera (actualmente en " + f"{int(dias_cobro)}" + " días).")
+                if endeudamiento_total > 60:
+                    acciones.append("3. **Capitalización:** Evalúe la retención de utilidades o aporte de socios para bajar la presión financiera.")
+                
+                if not acciones:
+                    st.write("Excelente desempeño. Priorice la expansión de mercado.")
+                else:
+                    for acc in acciones:
+                        st.write(acc)
 
             st.write("---")
-            st.subheader("Estructura de Capital")
-            st.bar_chart(pd.DataFrame({'Monto': [pt, pat]}, index=['Pasivos', 'Patrimonio']))
+            st.markdown("### 📈 Resumen Cognitivo")
+            st.write(f"El sistema detecta que por cada dólar invertido, la operación rinde {roic*100:.2f}%, mientras que financiar ese dólar cuesta {wacc*100:.2f}%.")
 
     except Exception as e:
-        st.error(f"Ocurrió un error inesperado: {e}")
-else:
-    st.info("👋 Por favor, cargue un archivo Excel para iniciar el análisis.")
+        st.error(f"Error inesperado: {e}")
