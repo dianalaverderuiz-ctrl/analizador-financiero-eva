@@ -97,3 +97,17 @@ if archivo_cargado is not None:
         st.error(f"Error: {e}")
 else:
     st.info("Cargue su archivo Excel para comenzar.")
+# --- CÁLCULOS ADICIONALES (RATIOS) ---
+            
+            # 1. Ratios de Liquidez
+            razon_corriente = total_activos_corrientes / pasivo_corriente  # Necesitas definir estas variables del Excel
+            prueba_acida = (total_activos_corrientes - inventarios) / pasivo_corriente
+            
+            # 2. Ratios de Solvencia y Endeudamiento
+            endeudamiento_total = (total_pasivos / total_activos) * 100
+            autonomia_financiera = (patrimonio / total_pasivos)
+            
+            # 3. Ratios de Actividad (Eficiencia)
+            # Nota: Ventas viene del Estado de Resultados
+            rotacion_activos = ventas / total_activos
+            dias_cobro = (cuentas_por_cobrar * 360) / ventas
