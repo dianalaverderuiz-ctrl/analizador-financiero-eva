@@ -2,111 +2,144 @@ import streamlit as st
 import pandas as pd
 import io
 
-# 1. CONFIGURACIÓN
+# 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="Consultor Financiero IA", layout="wide")
-st.title("📊 Analizador Financiero Inteligente")
+st.title("📊 Consultor Financiero Integrado: EVA, Ratios y Diagnóstico")
 
-# 2. CARGA
-st.sidebar.header("📁 Configuración")
-archivo = st.sidebar.file_uploader("Cargar Excel (.xlsx)", type=["xlsx"])
-ke_usuario = st.sidebar.slider("Costo Ke %", 5.0, 25.0, 14.0) / 100
+# 2. CARGA DE DATOS (BARRA LATERAL)
+st.sidebar.header("📁 Ingesta de Información")
+archivo = st.sidebar.file_uploader("Suba su archivo Excel (.xlsx)", type=["xlsx"])
+ke_usuario = st.sidebar.slider("Costo de Oportunidad (Ke) %", 5.0, 25.0, 14.0, step=0.5) / 100
+
+# FUNCIÓN DE EXTRACCIÓN SEGURA (Evita errores de Series/Float)
+def get_val(df, cuenta):
+    try:
+        val = df.loc[cuenta, 'Valor']
+        if isinstance(val, pd.Series):
+            return float(val.iloc[0])
+        return float(val)
+    except KeyError:
+        return None
 
 if archivo:
     try:
         xls = pd.ExcelFile(archivo)
+        # Identificación inteligente de pestañas
         p_bal = [s for s in xls.sheet_names if 'balan' in s.lower() or 'situac' in s.lower()][0]
         p_res = [s for s in xls.sheet_names if 'result' in s.lower() or 'perd' in s.lower() or 'pérd' in s.lower()][0]
         
         df_balance = pd.read_excel(archivo, sheet_name=p_bal)
         df_resultados = pd.read_excel(archivo, sheet_name=p_res)
         
-        # Limpieza radical de datos
-        df_balance.columns = df_balance.columns.str.strip()
-        df_resultados.columns = df_resultados.columns.str.strip()
+        # Limpieza de nombres
         df_balance['Cuenta'] = df_balance['Cuenta'].astype(str).str.strip()
         df_resultados['Cuenta'] = df_resultados['Cuenta'].astype(str).str.strip()
-        
-        # Filtrar solo las columnas necesarias y eliminar duplicados de cuenta
-        df_b = df_balance[['Cuenta', 'Valor']].drop_duplicates('Cuenta').set_index('Cuenta')
-        df_r = df_resultados[['Cuenta', 'Valor']].drop_duplicates('Cuenta').set_index('Cuenta')
+        df_b = df_balance.set_index('Cuenta')
+        df_r = df_resultados.set_index('Cuenta')
 
-        # FUNCIÓN DE EXTRACCIÓN SEGURA (Aquí está la clave)
-        def get_val(df, cuenta):
-            try:
-                # .item() transforma una celda de Pandas directamente en un número de Python
-                return float(df.loc[cuenta, 'Valor'])
-            except:
-                # Si falla, intentamos convertir a serie y tomar el primer elemento
-                val = df.loc[cuenta, 'Valor']
-                if isinstance(val, pd.Series):
-                    return float(val.iloc[0])
-                return float(val)
+        # --- EXTRACCIÓN DE VARIABLES ---
+        # Balance
+        at = get_val(df_b, 'Total Activos')
+        ac = get_val(df_b, 'Activo Corriente')
+        pc = get_val(df_b, 'Pasivo Corriente')
+        pt = get_val(df_b, 'Total Pasivos')
+        pat = get_val(df_b, 'Patrimonio Neto')
+        inv = get_val(df_b, 'Inventarios')
+        cxc = get_val(df_b, 'Cuentas por Cobrar')
+        df_fin = get_val(df_b, 'Deuda Financiera (Corto y Largo Plazo)')
+        pc_sc = get_val(df_b, 'Pasivo Corriente (Sin Costo Financiero)')
 
-        # EXTRACCIÓN
-        try:
-            at = get_val(df_b, 'Total Activos')
-            ac = get_val(df_b, 'Activo Corriente')
-            pc = get_val(df_b, 'Pasivo Corriente')
-            pt = get_val(df_b, 'Total Pasivos')
-            pat = get_val(df_b, 'Patrimonio Neto')
-            inv = get_val(df_b, 'Inventarios')
-            cxc = get_val(df_b, 'Cuentas por Cobrar')
-            df_fin = get_val(df_b, 'Deuda Financiera (Corto y Largo Plazo)')
-            pc_sc = get_val(df_b, 'Pasivo Corriente (Sin Costo Financiero)')
+        # Resultados
+        uaii = get_val(df_r, 'Utilidad Operativa (UAII)')
+        ventas = get_val(df_r, 'Ingresos Totales')
+        int_pag = get_val(df_r, 'Gastos Financieros (Intereses)')
+        imp = get_val(df_r, 'Impuestos de Renta')
+        uai = get_val(df_r, 'Utilidad Antes de Impuestos')
 
-            uaii = get_val(df_r, 'Utilidad Operativa (UAII)')
-            ventas = get_val(df_r, 'Ingresos Totales')
-            int_pag = get_val(df_r, 'Gastos Financieros (Intereses)')
-            imp = get_val(df_r, 'Impuestos de Renta')
-            uai = get_val(df_r, 'Utilidad Antes de Impuestos')
-        except KeyError as e:
-            st.error(f"❌ Error: No se encuentra la cuenta **{e}** en tu Excel.")
+        if None in [at, ac, pc, pt, pat, uaii, ventas]:
+            st.error("❌ Faltan cuentas críticas en el Excel. Revise los nombres de la columna 'Cuenta'.")
             st.stop()
 
-        # 3. CÁLCULOS
+        # --- CÁLCULOS CORE (EVA Y WACC) ---
         tax_rate = imp / uai if uai > 0 else 0.33
-        kd = int_pag / df_fin if df_fin > 0 else 0
-        v_est = df_fin + pat
-        wacc = ((df_fin/v_est)*kd*(1-tax_rate)) + ((pat/v_est)*ke_usuario) if v_est > 0 else 0
+        kd = int_pag / df_fin if (df_fin and df_fin > 0) else 0
+        v_est = (df_fin if df_fin else 0) + pat
+        wacc = (((df_fin if df_fin else 0)/v_est)*kd*(1-tax_rate)) + ((pat/v_est)*ke_usuario) if v_est > 0 else 0
         uodi = uaii * (1 - tax_rate)
-        cap_inv = at - pc_sc
+        cap_inv = at - (pc_sc if pc_sc else 0)
         eva = uodi - (cap_inv * wacc)
         roic = uodi / cap_inv if cap_inv > 0 else 0
-        
-        liq_corr = ac / pc if pc > 0 else 0
-        end_tot = (pt / at) * 100 if at > 0 else 0
-        
+
         # --- CÁLCULOS ADICIONALES (RATIOS) ---
-            
-        # 1. Ratios de Liquidez
-        razon_corriente = total_activos_corrientes / pasivo_corriente  # Necesitas definir estas variables del Excel
-        prueba_acida = (total_activos_corrientes - inventarios) / pasivo_corriente
-            
-        # 2. Ratios de Solvencia y Endeudamiento
-        endeudamiento_total = (total_pasivos / total_activos) * 100
-        autonomia_financiera = (patrimonio / total_pasivos)
-            
-        # 3. Ratios de Actividad (Eficiencia)
-        # Nota: Ventas viene del Estado de Resultados
-        rotacion_activos = ventas / total_activos
-        dias_cobro = (cuentas_por_cobrar * 360) / ventas
-        
-        # 4. INTERFAZ
-        t1, t2 = st.tabs(["🎯 Resultados", "📋 Informe"])
-        with t1:
+        razon_corriente = ac / pc if pc > 0 else 0
+        prueba_acida = (ac - (inv if inv else 0)) / pc if pc > 0 else 0
+        endeudamiento_total = (pt / at) * 100 if at > 0 else 0
+        autonomia_financiera = patrimonio / pt if (pt and pt > 0) else 0 # Usando patrimonio calculado
+        rotacion_activos = ventas / at if at > 0 else 0
+        dias_cobro = ((cxc if cxc else 0) * 360) / ventas if ventas > 0 else 0
+
+        # --- INTERFAZ ---
+        tab1, tab2, tab3 = st.tabs(["🎯 Diagnóstico EVA", "🔮 Escenarios", "📊 Ratios Financieros"])
+
+        with tab1:
+            st.subheader("Análisis de Generación de Valor")
             c1, c2, c3 = st.columns(3)
-            c1.metric("EVA", f"${eva:,.2f}")
+            c1.metric("EVA", f"${eva:,.2f}", delta="Creación" if eva > 0 else "Destrucción")
             c2.metric("WACC", f"{wacc*100:.2f}%")
             c3.metric("ROIC", f"{roic*100:.2f}%")
-            st.bar_chart(pd.DataFrame({'Valor': [uodi, cap_inv*wacc]}, index=['Utilidad', 'Costo Cap']))
+            
+            # Alertas Narrativas (Sistema que "Habla")
+            st.markdown("### 🧠 Diagnóstico IA")
+            if eva > 0 and razon_corriente < 1.0:
+                st.warning("⚠️ **Alerta de Seguridad:** La empresa crea valor (EVA+), pero tiene riesgo técnico de iliquidez (Razon Corriente < 1.0). El éxito operativo no se está traduciendo en caja disponible.")
+            elif eva < 0:
+                st.error(f"❌ **Alerta de Valor:** Se destruye valor. El costo de capital ({wacc*100:.2f}%) es mayor a la rentabilidad operativa ({roic*100:.2f}%).")
+            else:
+                st.success("✅ **Situación Ideal:** La empresa genera valor y mantiene una estructura equilibrada.")
 
-        with t2:
-            st.subheader("Informe de Consultoría")
-            st.write(f"**Liquidez:** {liq_corr:.2f} | **Endeudamiento:** {end_tot:.1f}%")
-            if eva < 0: st.error("Destrucción de valor detectada. Revise costos financieros.")
-            else: st.success("La empresa genera valor económico real.")
+        with tab2:
+            st.subheader("Simulación de Escenarios")
+            df_esc = pd.DataFrame({
+                "Escenario": ["Optimista (+10% UODI)", "Base", "Pesimista (+2% WACC)"],
+                "EVA Estimado": [
+                    (uodi * 1.1) - (cap_inv * wacc),
+                    eva,
+                    uodi - (cap_inv * (wacc + 0.02))
+                ]
+            })
+            st.table(df_esc.style.format({"EVA Estimado": "${:,.2f}"}))
+
+        with tab3:
+            st.subheader("Análisis de Ratios Financieros")
+            col_liq, col_sol, col_act = st.columns(3)
+            
+            with col_liq:
+                st.markdown("#### Liquidez")
+                st.metric("Razón Corriente", f"{razon_corriente:.2f}")
+                st.caption("Ideal: > 1.5")
+                st.metric("Prueba Ácida", f"{prueba_acida:.2f}")
+
+            with col_sol:
+                st.markdown("#### Endeudamiento")
+                st.metric("Endeudamiento Total", f"{endeudamiento_total:.1f}%")
+                st.progress(min(endeudamiento_total/100, 1.0))
+                if endeudamiento_total > 70:
+                    st.error("🚩 Endeudamiento Crítico: > 70%")
+
+            with col_act:
+                st.markdown("#### Actividad")
+                st.metric("Rotación Activos", f"{rotacion_activos:.2f}x")
+                st.metric("Días de Cobro", f"{int(dias_cobro)} días")
+
+            st.write("---")
+            st.subheader("Comparativa de Solvencia")
+            ratios_data = pd.DataFrame({
+                'Categoría': ['Deuda (Pasivos)', 'Patrimonio'],
+                'Monto': [pt, pat]
+            })
+            st.bar_chart(data=ratios_data, x='Categoría', y='Monto')
 
     except Exception as e:
-        st.error(f"Error inesperado: {e}")
+        st.error(f"Ocurrió un error inesperado: {e}")
 else:
-    st.info("Suba un archivo para analizar.")
+    st.info("👋 Por favor, cargue un archivo Excel para iniciar el análisis.")
