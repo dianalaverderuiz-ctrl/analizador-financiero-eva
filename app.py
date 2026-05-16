@@ -38,7 +38,6 @@ if archivo:
         df_r = df_resultados.set_index('Cuenta')
 
         # --- EXTRACCIÓN DE VARIABLES ---
-        # Balance
         at = get_val(df_b, 'Total Activos')
         ac = get_val(df_b, 'Activo Corriente')
         pc = get_val(df_b, 'Pasivo Corriente')
@@ -49,19 +48,19 @@ if archivo:
         df_fin = get_val(df_b, 'Deuda Financiera (Corto y Largo Plazo)')
         pc_sc = get_val(df_b, 'Pasivo Corriente (Sin Costo Financiero)')
 
-        # Resultados
         uaii = get_val(df_r, 'Utilidad Operativa (UAII)')
         ventas = get_val(df_r, 'Ingresos Totales')
         int_pag = get_val(df_r, 'Gastos Financieros (Intereses)')
         imp = get_val(df_r, 'Impuestos de Renta')
         uai = get_val(df_r, 'Utilidad Antes de Impuestos')
 
+        # Verificación de datos mínimos
         if None in [at, ac, pc, pt, pat, uaii, ventas]:
             st.error("❌ Faltan cuentas críticas en el Excel. Revise los nombres de la columna 'Cuenta'.")
             st.stop()
 
         # --- CÁLCULOS CORE (EVA Y WACC) ---
-        tax_rate = imp / uai if uai > 0 else 0.33
+        tax_rate = imp / uai if (uai and uai > 0) else 0.33
         kd = int_pag / df_fin if (df_fin and df_fin > 0) else 0
         v_est = (df_fin if df_fin else 0) + pat
         wacc = (((df_fin if df_fin else 0)/v_est)*kd*(1-tax_rate)) + ((pat/v_est)*ke_usuario) if v_est > 0 else 0
@@ -74,7 +73,7 @@ if archivo:
         razon_corriente = ac / pc if pc > 0 else 0
         prueba_acida = (ac - (inv if inv else 0)) / pc if pc > 0 else 0
         endeudamiento_total = (pt / at) * 100 if at > 0 else 0
-        autonomia_financiera = patrimonio / pt if (pt and pt > 0) else 0 # Usando patrimonio calculado
+        autonomia_financiera = pat / pt if (pt and pt > 0) else 0 
         rotacion_activos = ventas / at if at > 0 else 0
         dias_cobro = ((cxc if cxc else 0) * 360) / ventas if ventas > 0 else 0
 
@@ -88,26 +87,25 @@ if archivo:
             c2.metric("WACC", f"{wacc*100:.2f}%")
             c3.metric("ROIC", f"{roic*100:.2f}%")
             
-            # Alertas Narrativas (Sistema que "Habla")
             st.markdown("### 🧠 Diagnóstico IA")
             if eva > 0 and razon_corriente < 1.0:
-                st.warning("⚠️ **Alerta de Seguridad:** La empresa crea valor (EVA+), pero tiene riesgo técnico de iliquidez (Razon Corriente < 1.0). El éxito operativo no se está traduciendo en caja disponible.")
+                st.warning("⚠️ **Alerta de Seguridad:** La empresa crea valor, pero tiene riesgo de iliquidez.")
             elif eva < 0:
-                st.error(f"❌ **Alerta de Valor:** Se destruye valor. El costo de capital ({wacc*100:.2f}%) es mayor a la rentabilidad operativa ({roic*100:.2f}%).")
+                st.error(f"❌ **Alerta de Valor:** Se destruye valor económico.")
             else:
-                st.success("✅ **Situación Ideal:** La empresa genera valor y mantiene una estructura equilibrada.")
+                st.success("✅ **Situación Ideal:** La empresa genera valor y es solvente.")
 
         with tab2:
             st.subheader("Simulación de Escenarios")
-            df_esc = pd.DataFrame({
+            esc_data = {
                 "Escenario": ["Optimista (+10% UODI)", "Base", "Pesimista (+2% WACC)"],
                 "EVA Estimado": [
                     (uodi * 1.1) - (cap_inv * wacc),
                     eva,
                     uodi - (cap_inv * (wacc + 0.02))
                 ]
-            })
-            st.table(df_esc.style.format({"EVA Estimado": "${:,.2f}"}))
+            }
+            st.table(pd.DataFrame(esc_data).style.format({"EVA Estimado": "${:,.2f}"}))
 
         with tab3:
             st.subheader("Análisis de Ratios Financieros")
@@ -116,15 +114,12 @@ if archivo:
             with col_liq:
                 st.markdown("#### Liquidez")
                 st.metric("Razón Corriente", f"{razon_corriente:.2f}")
-                st.caption("Ideal: > 1.5")
                 st.metric("Prueba Ácida", f"{prueba_acida:.2f}")
 
             with col_sol:
-                st.markdown("#### Endeudamiento")
-                st.metric("Endeudamiento Total", f"{endeudamiento_total:.1f}%")
-                st.progress(min(endeudamiento_total/100, 1.0))
-                if endeudamiento_total > 70:
-                    st.error("🚩 Endeudamiento Crítico: > 70%")
+                st.markdown("#### Solvencia")
+                st.metric("Endeudamiento", f"{endeudamiento_total:.1f}%")
+                st.metric("Autonomía", f"{autonomia_financiera:.2f}")
 
             with col_act:
                 st.markdown("#### Actividad")
@@ -132,12 +127,8 @@ if archivo:
                 st.metric("Días de Cobro", f"{int(dias_cobro)} días")
 
             st.write("---")
-            st.subheader("Comparativa de Solvencia")
-            ratios_data = pd.DataFrame({
-                'Categoría': ['Deuda (Pasivos)', 'Patrimonio'],
-                'Monto': [pt, pat]
-            })
-            st.bar_chart(data=ratios_data, x='Categoría', y='Monto')
+            st.subheader("Estructura de Capital")
+            st.bar_chart(pd.DataFrame({'Monto': [pt, pat]}, index=['Pasivos', 'Patrimonio']))
 
     except Exception as e:
         st.error(f"Ocurrió un error inesperado: {e}")
